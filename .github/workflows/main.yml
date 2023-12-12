@@ -1,51 +1,50 @@
-name: Breachwatcher-24/7
+name: Breatchwatcher 24/7
 
 on:
   push:
     branches:
-      - main
+      - master
 
 jobs:
-  breachwatcher:
-    runs-on: ubuntu-latest  
+  build:
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v2
-      with:
-        ref: ${{ github.event.before }}
-        fetch-depth: 0
+      - name: Checkout Repository
+        uses: actions/checkout@v2
 
-    - name: Set up Java
-      uses: actions/setup-java@v2
-      with:
-        distribution: 'adopt'
-        java-version: '17'
+      - name: Set Up Java
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'adopt'
+          java-version: '147'
 
-    - name: Set up Gradle
-      uses: gradle/wrapper-action@v2
-      with:
-        gradle-version: '7.2'
+      - name: Clone Repositories
+        run: |
+          git clone --branch ${{ github.event_name }} https://github.com/nuxeo/nuxeo-tools-support-priv
+          cd nuxeo-tools-support-priv
+          git submodule update --init --recursive
 
-    - name: Build and Test
-      run: ./gradlew build
+      - name: Checking 24/7 Tickets
+        run: |
+          cd nuxeo-tools-support-priv
+          cd tickets/stages
+          ./execute_stage.sh tickets_at_risk weekend
+        env:
+          JIRA_USERNAME: ${{ secrets.JIRA_USERNAME }}
+          JIRA_PASSWORD: ${{ secrets.JIRA_PASSWORD }}
 
-    - name: Execute 24/7 Tickets Check
-      run: |
-        ./execute_stage.sh tickets_at_risk weekend > tickets_results.txt
-        echo "Results:"
-        cat tickets_results.txt
-
-    - name: Send Slack Notifications
-      if: ${{ success() }}
-      run: |
-        notifsList=$(./execute_stage.sh tickets_at_risk weekend)
-        if [ -n "$notifsList" ]; then
-          echo "Sending $(echo "$notifsList" | wc -l) notification(s) to $SLACK_CHANNEL..."
-          while IFS= read -r line; do
-            echo "Sending ###$line###"
-          
-            slackSend channel: $SLACK_CHANNEL, color: '#FF0000', message: $line, tokenCredentialId: 'slack-support-tm-integration-token'
-          done <<< "$notifsList"
-        else
-          echo "No notification to send."
+      - name: Send Notifications
+        run: |
+          if [ -n "$ticketsResults" ]; then
+            notifsList=($ticketsResults)
+            echo "Sending ${#notifsList[@]} notification(s) to ${SLACK_CHANNEL}..."
+            for notif in "${notifsList[@]}"; do
+              echo "Sending ###${notif}###"
+              curl -X POST -H "Content-type: application/json" -d '{"channel": "'${SLACK_CHANNEL}'", "color": "#FF0000", "text": "'${notif}'"}' https://slack.com/api/chat.postMessage?token=${{ secrets.SLACK_TOKEN }}
+            done
+          else
+            echo "No notification to send."
+          fi
+        env:
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
